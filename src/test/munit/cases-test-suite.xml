@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="cases-test-suite.xml"/>
+
+    <!-- ============================================== -->
+    <!-- TEST: POST /cases - Create Incident Success    -->
+    <!-- ============================================== -->
+    <munit:test name="post-cases-create-incident-success-test" 
+                description="Test successful creation of ServiceNow incident from Salesforce case"
+                doc:name="POST /cases - Create Incident Success">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Create Incident -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Create Incident">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": { "sys_id": "abc123def456", "number": "INC0010001", "short_description": "Test Case Subject", "description": "Test Description", "state": "1", "priority": "2", "opened_at": "2025-01-15T10:00:00Z" } }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store -->
+            <munit-tools:mock-when processor="os:store" doc:name="Mock Object Store">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "salesforceCaseId": "5001234567890ABC", "subject": "Test Case Subject", "description": "Test Description", "status": "New", "priority": "High", "origin": "Web", "ownerId": "0051234567890ABC" }]' doc:name="Set Case Payload"/>
+            <set-variable variableName="casePayload" value="#[payload]" doc:name="Store Case Payload"/>
+            <flow-ref name="create-incident-from-case-flow" doc:name="Call Create Incident Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.serviceNowIncidentId]" is="#[MunitTools::notNullValue()]" message="Incident ID should not be null" doc:name="Assert Incident ID"/>
+            <munit-tools:assert-that expression="#[payload.number]" is="#[MunitTools::equalTo('INC0010001')]" message="Incident number should match" doc:name="Assert Incident Number"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('201')]" message="HTTP status should be 201" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /cases - Retrieve Case Success       -->
+    <!-- ============================================== -->
+    <munit:test name="get-cases-retrieve-case-success-test" 
+                description="Test successful retrieval of Salesforce case"
+                doc:name="GET /cases - Retrieve Case Success">
+        
+        <munit:behavior>
+            <!-- Mock Salesforce OAuth Token -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce OAuth">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Request OAuth Token"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "access_token": "mock_access_token_12345", "token_type": "Bearer", "instance_url": "https://test.salesforce.com" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Salesforce Get Case -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce Get Case">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Get Case from Salesforce"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "Id": "5001234567890ABC", "Subject": "Test Case Subject", "Description": "Test Description", "Status": "New", "Priority": "High", "Origin": "Web", "OwnerId": "0051234567890ABC", "CreatedDate": "2025-01-15T10:00:00.000+0000" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store Contains -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasToken" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store Store -->
+            <munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-variable variableName="salesforceCaseId" value="5001234567890ABC" doc:name="Set Case ID"/>
+            <munit-tools:mock-when processor="os:retrieve" doc:name="Mock OS Retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="salesforceAccessToken" value="mock_access_token"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <flow-ref name="get-salesforce-case-flow" doc:name="Call Get Case Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.salesforceCaseId]" is="#[MunitTools::equalTo('5001234567890ABC')]" message="Case ID should match" doc:name="Assert Case ID"/>
+            <munit-tools:assert-that expression="#[payload.subject]" is="#[MunitTools::equalTo('Test Case Subject')]" message="Subject should match" doc:name="Assert Subject"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: POST /cases - ServiceNow Timeout         -->
+    <!-- ============================================== -->
+    <munit:test name="post-cases-servicenow-timeout-test" 
+                description="Test ServiceNow timeout handling"
+                expectedErrorType="HTTP:BAD_GATEWAY"
+                doc:name="POST /cases - ServiceNow Timeout">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Timeout -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Timeout">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="HTTP:TIMEOUT"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "salesforceCaseId": "5001234567890ABC", "subject": "Test Case", "description": "Test", "status": "New", "priority": "High" }]' doc:name="Set Case Payload"/>
+            <set-variable variableName="casePayload" value="#[payload]" doc:name="Store Case Payload"/>
+            <flow-ref name="create-incident-from-case-flow" doc:name="Call Create Incident Flow"/>
+        </munit:execution>
+        
+    </munit:test>
+
+</mule>

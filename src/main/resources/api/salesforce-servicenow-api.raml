@@ -1,0 +1,219 @@
+#%RAML 1.0
+title: Salesforce ServiceNow ITSM Integration API
+version: v1
+baseUri: https://api.company.com/salesforce-servicenow/{version}
+mediaType: application/json
+
+description: |
+  Enterprise API enabling bi-directional integration between
+  Salesforce Service Cloud and ServiceNow ITSM for incident
+  and case lifecycle synchronization.
+
+protocols:
+  - HTTPS
+
+#############################################
+# Security
+#############################################
+
+securitySchemes:
+  client-id-auth:
+    type: x-client-id-enforcement
+    describedBy:
+      headers:
+        client-id:
+          type: string
+          required: true
+        client-secret:
+          type: string
+          required: true
+
+securedBy:
+  - client-id-auth
+
+#############################################
+# Data Types
+#############################################
+
+types:
+
+  User:
+    properties:
+      userId: string
+      name: string
+      email?: string
+
+  Case:
+    properties:
+      salesforceCaseId: string
+      subject: string
+      description: string
+      status: string
+      priority: string
+      origin?: string
+      ownerId?: string
+      createdDate?: datetime
+
+  Incident:
+    properties:
+      serviceNowIncidentId?: string
+      number?: string
+      shortDescription: string
+      description: string
+      state: string
+      priority: string
+      assignmentGroup?: string
+      assignedTo?: string
+      openedAt?: datetime
+
+  Comment:
+    properties:
+      parentId: string
+      sourceSystem: string
+      message: string
+      createdBy: string
+      createdDate?: datetime
+
+  StatusSync:
+    properties:
+      sourceId: string
+      targetId: string
+      sourceStatus: string
+      targetStatus: string
+      updatedAt: datetime
+
+  SLA:
+    properties:
+      parentId: string
+      slaType: string
+      dueDate: datetime
+      breached: boolean
+
+  ErrorResponse:
+    properties:
+      errorCode: string
+      message: string
+      correlationId: string
+      timestamp: datetime
+
+#############################################
+# Resources
+#############################################
+
+/cases:
+  description: Salesforce case operations
+
+  post:
+    description: Create ServiceNow incident from Salesforce case
+    body:
+      application/json:
+        type: Case
+    responses:
+      201:
+        body:
+          application/json:
+            type: Incident
+
+  get:
+    description: Retrieve Salesforce case
+    queryParameters:
+      salesforceCaseId:
+        required: true
+        type: string
+    responses:
+      200:
+        body:
+          application/json:
+            type: Case
+
+#############################################
+
+/incidents:
+  description: ServiceNow incident operations
+
+  get:
+    description: Retrieve ServiceNow incident details
+    queryParameters:
+      serviceNowIncidentId:
+        required: true
+        type: string
+    responses:
+      200:
+        body:
+          application/json:
+            type: Incident
+
+  put:
+    description: Update incident from Salesforce
+    body:
+      application/json:
+        type: Incident
+    responses:
+      200:
+        body:
+          application/json:
+            type: Incident
+
+#############################################
+
+/status-sync:
+  description: Bi-directional status synchronization
+
+  post:
+    description: Sync incident or case status between systems
+    body:
+      application/json:
+        type: StatusSync
+    responses:
+      200:
+        body:
+          application/json:
+            type: StatusSync
+
+#############################################
+
+/comments:
+  description: Comment and work note synchronization
+
+  post:
+    description: Sync comments between Salesforce and ServiceNow
+    body:
+      application/json:
+        type: Comment
+    responses:
+      201:
+        body:
+          application/json:
+            type: Comment
+
+#############################################
+
+/sla:
+  description: SLA visibility and synchronization
+
+  get:
+    description: Retrieve SLA details for case or incident
+    queryParameters:
+      parentId:
+        required: true
+        type: string
+    responses:
+      200:
+        body:
+          application/json:
+            type: SLA
+
+#############################################
+# Health Check
+#############################################
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example:
+              status: UP
+              system: ServiceNow-ITSM
+              timestamp: 2025-01-01T12:00:00Z

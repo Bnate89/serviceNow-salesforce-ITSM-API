@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="comments-test-suite.xml"/>
+
+    <!-- ============================================== -->
+    <!-- TEST: POST /comments - SF to SN Success        -->
+    <!-- ============================================== -->
+    <munit:test name="post-comments-sf-to-sn-success-test" 
+                description="Test successful comment sync from Salesforce to ServiceNow"
+                doc:name="POST /comments - SF to SN Success">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Create Work Note -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Create Work Note">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": { "sys_id": "worknote123", "element_id": "abc123", "value": "Test comment" } }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "parentId": "abc123def456", "sourceSystem": "Salesforce", "message": "Test comment from Salesforce", "createdBy": "John Doe" }]' doc:name="Set Comment Payload"/>
+            <set-variable variableName="commentPayload" value="#[payload]" doc:name="Store Payload"/>
+            <flow-ref name="sync-comments-flow" doc:name="Call Sync Comments Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.parentId]" is="#[MunitTools::equalTo('abc123def456')]" message="Parent ID should match" doc:name="Assert Parent ID"/>
+            <munit-tools:assert-that expression="#[payload.sourceSystem]" is="#[MunitTools::equalTo('Salesforce')]" message="Source system should match" doc:name="Assert Source System"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('201')]" message="HTTP status should be 201" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: POST /comments - SN to SF Success        -->
+    <!-- ============================================== -->
+    <munit:test name="post-comments-sn-to-sf-success-test" 
+                description="Test successful comment sync from ServiceNow to Salesforce"
+                doc:name="POST /comments - SN to SF Success">
+        
+        <munit:behavior>
+            <!-- Mock Salesforce OAuth -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce OAuth">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Request OAuth Token"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "access_token": "mock_token", "token_type": "Bearer" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Salesforce Create Comment -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce Create Comment">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Create Case Comment in Salesforce"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "id": "comment123", "success": true }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasToken" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "parentId": "5001234567890ABC", "sourceSystem": "ServiceNow", "message": "Test work note from ServiceNow", "createdBy": "Jane Smith" }]' doc:name="Set Comment Payload"/>
+            <set-variable variableName="commentPayload" value="#[payload]" doc:name="Store Payload"/>
+            <flow-ref name="sync-comments-flow" doc:name="Call Sync Comments Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.parentId]" is="#[MunitTools::equalTo('5001234567890ABC')]" message="Parent ID should match" doc:name="Assert Parent ID"/>
+            <munit-tools:assert-that expression="#[payload.sourceSystem]" is="#[MunitTools::equalTo('ServiceNow')]" message="Source system should match" doc:name="Assert Source System"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('201')]" message="HTTP status should be 201" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: POST /comments - Unknown Source System   -->
+    <!-- ============================================== -->
+    <munit:test name="post-comments-unknown-source-test" 
+                description="Test unknown source system handling"
+                expectedErrorType="MULE:EXPRESSION"
+                doc:name="POST /comments - Unknown Source">
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "parentId": "abc123", "sourceSystem": "Unknown", "message": "Test", "createdBy": "User" }]' doc:name="Set Invalid Payload"/>
+            <set-variable variableName="commentPayload" value="#[payload]" doc:name="Store Payload"/>
+            <flow-ref name="sync-comments-flow" doc:name="Call Sync Comments Flow"/>
+        </munit:execution>
+        
+    </munit:test>
+
+</mule>

@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <!-- ============================================== -->
+    <!-- HEALTH CHECK FLOW                              -->
+    <!-- GET /health - System health check              -->
+    <!-- ============================================== -->
+    <flow name="health-check-flow" doc:name="Health Check Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Health check requested - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Health Check"/>
+        
+        <!-- Initialize health status -->
+        <set-variable variableName="overallStatus" value="UP" doc:name="Initialize Status"/>
+        <set-variable variableName="salesforceStatus" value="UNKNOWN" doc:name="Initialize SF Status"/>
+        <set-variable variableName="servicenowStatus" value="UNKNOWN" doc:name="Initialize SN Status"/>
+        
+        <!-- Check Salesforce connectivity -->
+        <try doc:name="Try Salesforce Health Check">
+            <flow-ref name="check-salesforce-health-sub-flow" doc:name="Check Salesforce Health"/>
+            <set-variable variableName="salesforceStatus" value="UP" doc:name="Set SF Status UP"/>
+            <error-handler>
+                <on-error-continue type="ANY" doc:name="SF Health Check Failed">
+                    <set-variable variableName="salesforceStatus" value="DOWN" doc:name="Set SF Status DOWN"/>
+                    <set-variable variableName="overallStatus" value="DEGRADED" doc:name="Set Overall DEGRADED"/>
+                    <logger level="WARN" 
+                            message="#['Salesforce health check failed - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log SF Health Failure"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+        
+        <!-- Check ServiceNow connectivity -->
+        <try doc:name="Try ServiceNow Health Check">
+            <flow-ref name="check-servicenow-health-sub-flow" doc:name="Check ServiceNow Health"/>
+            <set-variable variableName="servicenowStatus" value="UP" doc:name="Set SN Status UP"/>
+            <error-handler>
+                <on-error-continue type="ANY" doc:name="SN Health Check Failed">
+                    <set-variable variableName="servicenowStatus" value="DOWN" doc:name="Set SN Status DOWN"/>
+                    <set-variable variableName="overallStatus" value="DEGRADED" doc:name="Set Overall DEGRADED"/>
+                    <logger level="WARN" 
+                            message="#['ServiceNow health check failed - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log SN Health Failure"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+        
+        <!-- Build health response -->
+        <ee:transform doc:name="Build Health Response">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    status: vars.overallStatus,
+    system: "Salesforce-ServiceNow-ITSM-Integration",
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+    dependencies: {
+        salesforce: {
+            status: vars.salesforceStatus
+        },
+        servicenow: {
+            status: vars.servicenowStatus
+        }
+    },
+    version: p('api.version')
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- Set response status -->
+        <set-variable variableName="httpStatus" value="200" doc:name="Set HTTP Status 200"/>
+        
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- CHECK SALESFORCE HEALTH SUB-FLOW               -->
+    <!-- ============================================== -->
+    <sub-flow name="check-salesforce-health-sub-flow" doc:name="Check Salesforce Health Sub-Flow">
+        
+        <!-- Get OAuth Token to verify connectivity -->
+        <flow-ref name="get-salesforce-oauth-token-sub-flow" doc:name="Get Salesforce OAuth Token"/>
+        
+        <logger level="DEBUG" 
+                message="#['Salesforce health check passed - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log SF Health OK"/>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- CHECK SERVICENOW HEALTH SUB-FLOW               -->
+    <!-- ============================================== -->
+    <sub-flow name="check-servicenow-health-sub-flow" doc:name="Check ServiceNow Health Sub-Flow">
+        
+        <!-- Simple API call to verify connectivity -->
+        <http:request method="GET" 
+                      config-ref="ServiceNow_HTTP_Request_Config" 
+                      path="${servicenow.api.basePath}/sys_properties"
+                      doc:name="ServiceNow Health Check">
+            <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Basic " ++ (p('secure::servicenow.credentials.username') ++ ":" ++ p('secure::servicenow.credentials.password')) as Binary as String {encoding: "Base64"}
+}]]]></http:headers>
+            <http:query-params><![CDATA[#[{
+    "sysparm_limit": "1"
+}]]]></http:query-params>
+        </http:request>
+        
+        <logger level="DEBUG" 
+                message="#['ServiceNow health check passed - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log SN Health OK"/>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- GET SALESFORCE OAUTH TOKEN SUB-FLOW            -->
+    <!-- ============================================== -->
+    <sub-flow name="get-salesforce-oauth-token-sub-flow" doc:name="Get Salesforce OAuth Token Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Requesting Salesforce OAuth token - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log OAuth Request"/>
+        
+        <!-- Check if we have a cached token -->
+        <try doc:name="Try Get Cached Token">
+            <os:contains key="salesforce_access_token" 
+                         objectStore="Case_Incident_Mapping_Store"
+                         target="hasToken"
+                         doc:name="Check Cached Token"/>
+            
+            <choice doc:name="Has Cached Token?">
+                <when expression="#[vars.hasToken]">
+                    <os:retrieve key="salesforce_access_token" 
+                                 objectStore="Case_Incident_Mapping_Store"
+                                 target="salesforceAccessToken"
+                                 doc:name="Retrieve Cached Token"/>
+                    <logger level="DEBUG" 
+                            message="#['Using cached Salesforce OAuth token - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Cached Token"/>
+                </when>
+                <otherwise>
+                    <!-- Request new token -->
+                    <flow-ref name="request-salesforce-oauth-token-sub-flow" doc:name="Request New Token"/>
+                </otherwise>
+            </choice>
+            
+            <error-handler>
+                <on-error-continue type="ANY" doc:name="Token Cache Error">
+                    <!-- Request new token on any cache error -->
+                    <flow-ref name="request-salesforce-oauth-token-sub-flow" doc:name="Request New Token"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- REQUEST SALESFORCE OAUTH TOKEN SUB-FLOW        -->
+    <!-- ============================================== -->
+    <sub-flow name="request-salesforce-oauth-token-sub-flow" doc:name="Request Salesforce OAuth Token Sub-Flow">
+        
+        <!-- Build OAuth request -->
+        <ee:transform doc:name="Build OAuth Request">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/x-www-form-urlencoded
+---
+{
+    grant_type: "password",
+    client_id: p('secure::salesforce.credentials.clientId'),
+    client_secret: p('secure::salesforce.credentials.clientSecret'),
+    username: p('secure::salesforce.credentials.username'),
+    password: p('secure::salesforce.credentials.password') ++ p('secure::salesforce.credentials.securityToken')
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <try doc:name="Try OAuth Request">
+            <http:request method="POST" 
+                          config-ref="Salesforce_HTTP_Request_Config" 
+                          path="${salesforce.oauth.tokenUrl}"
+                          doc:name="Request OAuth Token">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Accept": "application/json"
+}]]]></http:headers>
+            </http:request>
+            
+            <!-- Extract and cache token -->
+            <set-variable variableName="salesforceAccessToken" 
+                          value="#[payload.access_token]" 
+                          doc:name="Extract Access Token"/>
+            
+            <!-- Cache the token -->
+            <try doc:name="Try Cache Token">
+                <os:store key="salesforce_access_token" 
+                          objectStore="Case_Incident_Mapping_Store"
+                          doc:name="Cache Access Token">
+                    <os:value><![CDATA[#[vars.salesforceAccessToken]]]></os:value>
+                </os:store>
+                <error-handler>
+                    <on-error-continue type="ANY" doc:name="Continue on Cache Error">
+                        <logger level="WARN" 
+                                message="#['Failed to cache Salesforce token - CorrelationId: ' ++ correlationId]" 
+                                doc:name="Log Cache Error"/>
+                    </on-error-continue>
+                </error-handler>
+            </try>
+            
+            <logger level="DEBUG" 
+                    message="#['Salesforce OAuth token obtained successfully - CorrelationId: ' ++ correlationId]" 
+                    doc:name="Log Token Success"/>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:UNAUTHORIZED" doc:name="OAuth Unauthorized">
+                    <logger level="ERROR" 
+                            message="#['Salesforce OAuth authentication failed - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Auth Failure"/>
+                    <raise-error type="HTTP:UNAUTHORIZED" description="Salesforce authentication failed"/>
+                </on-error-propagate>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="OAuth Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['Salesforce OAuth connectivity error - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Connectivity Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="Salesforce OAuth service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- LOGGING UTILITY SUB-FLOWS                      -->
+    <!-- ============================================== -->
+    
+    <sub-flow name="log-request-sub-flow" doc:name="Log Request Sub-Flow">
+        <logger level="INFO" 
+                message="#['REQUEST - CorrelationId: ' ++ correlationId ++ ' | Method: ' ++ attributes.method ++ ' | Path: ' ++ attributes.requestPath ++ ' | Headers: ' ++ (attributes.headers filterObject ((value, key) -> !(lower(key as String) contains 'authorization') and !(lower(key as String) contains 'secret')) as String)]" 
+                doc:name="Log Request Details"/>
+    </sub-flow>
+    
+    <sub-flow name="log-response-sub-flow" doc:name="Log Response Sub-Flow">
+        <logger level="INFO" 
+                message="#['RESPONSE - CorrelationId: ' ++ correlationId ++ ' | Status: ' ++ (vars.httpStatus default 200)]" 
+                doc:name="Log Response Details"/>
+    </sub-flow>
+
+</mule>

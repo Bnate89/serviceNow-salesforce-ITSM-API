@@ -1,0 +1,18 @@
+{
+  "minMuleVersion": "4.9.3",
+  "javaSpecificationVersions": ["17"],
+  "secureProperties": [
+    "secure.key",
+    "salesforce.credentials.clientId",
+    "salesforce.credentials.clientSecret",
+    "salesforce.credentials.username",
+    "salesforce.credentials.password",
+    "salesforce.credentials.securityToken",
+    "servicenow.credentials.username",
+    "servicenow.credentials.password",
+    "servicenow.credentials.clientId",
+    "servicenow.credentials.clientSecret",
+    "anypoint.platform.clientId",
+    "anypoint.platform.clientSecret"
+  ]
+}

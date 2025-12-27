@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <!-- ============================================== -->
+    <!-- CREATE INCIDENT FROM CASE FLOW                 -->
+    <!-- POST /cases - Creates ServiceNow incident      -->
+    <!-- ============================================== -->
+    <flow name="create-incident-from-case-flow" doc:name="Create Incident From Case Flow">
+        
+        <!-- Store original case payload -->
+        <set-variable variableName="casePayload" value="#[payload]" doc:name="Store Case Payload"/>
+        
+        <logger level="INFO" 
+                message="#['Creating ServiceNow incident from Salesforce case - CaseId: ' ++ (payload.salesforceCaseId default 'unknown') ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Case Processing"/>
+        
+        <!-- Transform Salesforce Case to ServiceNow Incident format -->
+        <flow-ref name="transform-case-to-incident-sub-flow" doc:name="Transform Case to Incident"/>
+        
+        <!-- Create Incident in ServiceNow -->
+        <flow-ref name="create-servicenow-incident-sub-flow" doc:name="Create ServiceNow Incident"/>
+        
+        <!-- Store mapping in Object Store -->
+        <flow-ref name="store-case-incident-mapping-sub-flow" doc:name="Store Case-Incident Mapping"/>
+        
+        <!-- Set response status -->
+        <set-variable variableName="httpStatus" value="201" doc:name="Set HTTP Status 201"/>
+        
+        <logger level="INFO" 
+                message="#['ServiceNow incident created successfully - IncidentNumber: ' ++ (payload.number default 'unknown') ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Success"/>
+        
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- GET SALESFORCE CASE FLOW                       -->
+    <!-- GET /cases - Retrieves case from Salesforce    -->
+    <!-- ============================================== -->
+    <flow name="get-salesforce-case-flow" doc:name="Get Salesforce Case Flow">
+        
+        <!-- Extract query parameter -->
+        <set-variable variableName="salesforceCaseId" 
+                      value="#[attributes.queryParams.salesforceCaseId]" 
+                      doc:name="Extract Case ID"/>
+        
+        <logger level="INFO" 
+                message="#['Retrieving Salesforce case - CaseId: ' ++ vars.salesforceCaseId ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Case Retrieval"/>
+        
+        <!-- Get Case from Salesforce -->
+        <flow-ref name="get-case-from-salesforce-sub-flow" doc:name="Get Case From Salesforce"/>
+        
+        <!-- Set response status -->
+        <set-variable variableName="httpStatus" value="200" doc:name="Set HTTP Status 200"/>
+        
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- TRANSFORM CASE TO INCIDENT SUB-FLOW            -->
+    <!-- ============================================== -->
+    <sub-flow name="transform-case-to-incident-sub-flow" doc:name="Transform Case to Incident Sub-Flow">
+        <ee:transform doc:name="Map Case to Incident">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var priorityMapping = {
+    "High": "1",
+    "Medium": "2",
+    "Low": "3",
+    "Critical": "1"
+}
+var statusMapping = {
+    "New": "1",
+    "Working": "2",
+    "Escalated": "3",
+    "Closed": "7"
+}
+---
+{
+    short_description: payload.subject,
+    description: payload.description,
+    priority: priorityMapping[payload.priority] default "3",
+    state: statusMapping[payload.status] default "1",
+    caller_id: payload.ownerId default "",
+    u_salesforce_case_id: payload.salesforceCaseId,
+    contact_type: payload.origin default "web",
+    category: "inquiry"
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="salesforceCaseId"><![CDATA[#[vars.casePayload.salesforceCaseId]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- CREATE SERVICENOW INCIDENT SUB-FLOW            -->
+    <!-- ============================================== -->
+    <sub-flow name="create-servicenow-incident-sub-flow" doc:name="Create ServiceNow Incident Sub-Flow">
+        
+        <!-- Store request payload -->
+        <set-variable variableName="incidentRequest" value="#[payload]" doc:name="Store Incident Request"/>
+        
+        <logger level="DEBUG" 
+                message="#['Calling ServiceNow API to create incident - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log ServiceNow Call"/>
+        
+        <try doc:name="Try ServiceNow Call">
+            <http:request method="POST" 
+                          config-ref="ServiceNow_HTTP_Request_Config" 
+                          path="${servicenow.api.basePath}/incident"
+                          doc:name="Create Incident in ServiceNow">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Basic " ++ (p('secure::servicenow.credentials.username') ++ ":" ++ p('secure::servicenow.credentials.password')) as Binary as String {encoding: "Base64"}
+}]]]></http:headers>
+            </http:request>
+            
+            <!-- Transform ServiceNow response to API response format -->
+            <ee:transform doc:name="Transform ServiceNow Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var result = payload.result default payload
+var stateMapping = {
+    "1": "New",
+    "2": "In Progress",
+    "3": "On Hold",
+    "6": "Resolved",
+    "7": "Closed"
+}
+var priorityMapping = {
+    "1": "Critical",
+    "2": "High",
+    "3": "Medium",
+    "4": "Low",
+    "5": "Planning"
+}
+---
+{
+    serviceNowIncidentId: result.sys_id default "",
+    number: result.number default "",
+    shortDescription: result.short_description default "",
+    description: result.description default "",
+    state: stateMapping[result.state default "1"] default "New",
+    priority: priorityMapping[result.priority default "3"] default "Medium",
+    assignmentGroup: result.assignment_group.display_value default "",
+    assignedTo: result.assigned_to.display_value default "",
+    openedAt: result.opened_at default now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+}]]></ee:set-payload>
+                </ee:message>
+                <ee:variables>
+                    <ee:set-variable variableName="serviceNowIncidentId"><![CDATA[#[payload.result.sys_id default ""]]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="ServiceNow Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['ServiceNow API connectivity error - CorrelationId: ' ++ correlationId ++ ' | Error: ' ++ error.description]" 
+                            doc:name="Log Connectivity Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="ServiceNow service unavailable"/>
+                </on-error-propagate>
+                <on-error-propagate type="ANY" doc:name="ServiceNow General Error">
+                    <logger level="ERROR" 
+                            message="#['ServiceNow API error - CorrelationId: ' ++ correlationId ++ ' | Error: ' ++ error.description]" 
+                            doc:name="Log General Error"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- GET CASE FROM SALESFORCE SUB-FLOW              -->
+    <!-- ============================================== -->
+    <sub-flow name="get-case-from-salesforce-sub-flow" doc:name="Get Case From Salesforce Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Calling Salesforce API to retrieve case - CaseId: ' ++ vars.salesforceCaseId ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Salesforce Call"/>
+        
+        <try doc:name="Try Salesforce Call">
+            <!-- Get OAuth Token first -->
+            <flow-ref name="get-salesforce-oauth-token-sub-flow" doc:name="Get Salesforce OAuth Token"/>
+            
+            <http:request method="GET" 
+                          config-ref="Salesforce_HTTP_Request_Config" 
+                          path="#['${salesforce.api.basePath}/sobjects/Case/' ++ vars.salesforceCaseId]"
+                          doc:name="Get Case from Salesforce">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Bearer " ++ vars.salesforceAccessToken
+}]]]></http:headers>
+            </http:request>
+            
+            <!-- Transform Salesforce response to API response format -->
+            <ee:transform doc:name="Transform Salesforce Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    salesforceCaseId: payload.Id default "",
+    subject: payload.Subject default "",
+    description: payload.Description default "",
+    status: payload.Status default "",
+    priority: payload.Priority default "",
+    origin: payload.Origin default "",
+    ownerId: payload.OwnerId default "",
+    createdDate: payload.CreatedDate default now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:NOT_FOUND" doc:name="Case Not Found">
+                    <logger level="WARN" 
+                            message="#['Salesforce case not found - CaseId: ' ++ vars.salesforceCaseId ++ ' - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Not Found"/>
+                    <raise-error type="MULE:ROUTING" description="#['Case not found: ' ++ vars.salesforceCaseId]"/>
+                </on-error-propagate>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="Salesforce Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['Salesforce API connectivity error - CorrelationId: ' ++ correlationId ++ ' | Error: ' ++ error.description]" 
+                            doc:name="Log Connectivity Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="Salesforce service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- STORE CASE-INCIDENT MAPPING SUB-FLOW           -->
+    <!-- ============================================== -->
+    <sub-flow name="store-case-incident-mapping-sub-flow" doc:name="Store Case-Incident Mapping Sub-Flow">
+        
+        <set-variable variableName="incidentResponse" value="#[payload]" doc:name="Store Incident Response"/>
+        
+        <try doc:name="Try Store Mapping">
+            <os:store key="#[vars.salesforceCaseId]" 
+                      objectStore="Case_Incident_Mapping_Store"
+                      doc:name="Store Mapping">
+                <os:value><![CDATA[#[{
+    salesforceCaseId: vars.salesforceCaseId,
+    serviceNowIncidentId: vars.serviceNowIncidentId,
+    incidentNumber: vars.incidentResponse.number,
+    createdAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+}]]]></os:value>
+            </os:store>
+            
+            <logger level="DEBUG" 
+                    message="#['Case-Incident mapping stored - CaseId: ' ++ vars.salesforceCaseId ++ ' | IncidentId: ' ++ vars.serviceNowIncidentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                    doc:name="Log Mapping Stored"/>
+            
+            <error-handler>
+                <on-error-continue type="ANY" doc:name="Continue on Store Error">
+                    <logger level="WARN" 
+                            message="#['Failed to store case-incident mapping - CaseId: ' ++ vars.salesforceCaseId ++ ' - CorrelationId: ' ++ correlationId ++ ' | Error: ' ++ error.description]" 
+                            doc:name="Log Store Error"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+        
+        <!-- Restore incident response as payload -->
+        <set-payload value="#[vars.incidentResponse]" doc:name="Restore Incident Response"/>
+        
+    </sub-flow>
+
+</mule>

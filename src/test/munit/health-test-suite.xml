@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="health-test-suite.xml"/>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /health - All Systems UP             -->
+    <!-- ============================================== -->
+    <munit:test name="get-health-all-up-test" 
+                description="Test health check when all systems are up"
+                doc:name="GET /health - All Systems UP">
+        
+        <munit:behavior>
+            <!-- Mock Salesforce OAuth -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce OAuth">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Request OAuth Token"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "access_token": "mock_token", "token_type": "Bearer" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock ServiceNow Health Check -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Health">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="ServiceNow Health Check"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": [] }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasToken" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="health-check-flow" doc:name="Call Health Check Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('UP')]" message="Overall status should be UP" doc:name="Assert Overall Status"/>
+            <munit-tools:assert-that expression="#[payload.dependencies.salesforce.status]" is="#[MunitTools::equalTo('UP')]" message="Salesforce status should be UP" doc:name="Assert SF Status"/>
+            <munit-tools:assert-that expression="#[payload.dependencies.servicenow.status]" is="#[MunitTools::equalTo('UP')]" message="ServiceNow status should be UP" doc:name="Assert SN Status"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /health - Salesforce DOWN            -->
+    <!-- ============================================== -->
+    <munit:test name="get-health-sf-down-test" 
+                description="Test health check when Salesforce is down"
+                doc:name="GET /health - Salesforce DOWN">
+        
+        <munit:behavior>
+            <!-- Mock Salesforce OAuth Failure -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce OAuth Failure">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Request OAuth Token"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="HTTP:CONNECTIVITY"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock ServiceNow Health Check -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Health">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="ServiceNow Health Check"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": [] }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasToken" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="health-check-flow" doc:name="Call Health Check Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('DEGRADED')]" message="Overall status should be DEGRADED" doc:name="Assert Overall Status"/>
+            <munit-tools:assert-that expression="#[payload.dependencies.salesforce.status]" is="#[MunitTools::equalTo('DOWN')]" message="Salesforce status should be DOWN" doc:name="Assert SF Status"/>
+            <munit-tools:assert-that expression="#[payload.dependencies.servicenow.status]" is="#[MunitTools::equalTo('UP')]" message="ServiceNow status should be UP" doc:name="Assert SN Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /health - ServiceNow DOWN            -->
+    <!-- ============================================== -->
+    <munit:test name="get-health-sn-down-test" 
+                description="Test health check when ServiceNow is down"
+                doc:name="GET /health - ServiceNow DOWN">
+        
+        <munit:behavior>
+            <!-- Mock Salesforce OAuth -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce OAuth">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Request OAuth Token"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "access_token": "mock_token", "token_type": "Bearer" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock ServiceNow Health Check Failure -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Health Failure">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="ServiceNow Health Check"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="HTTP:TIMEOUT"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasToken" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <flow-ref name="health-check-flow" doc:name="Call Health Check Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('DEGRADED')]" message="Overall status should be DEGRADED" doc:name="Assert Overall Status"/>
+            <munit-tools:assert-that expression="#[payload.dependencies.salesforce.status]" is="#[MunitTools::equalTo('UP')]" message="Salesforce status should be UP" doc:name="Assert SF Status"/>
+            <munit-tools:assert-that expression="#[payload.dependencies.servicenow.status]" is="#[MunitTools::equalTo('DOWN')]" message="ServiceNow status should be DOWN" doc:name="Assert SN Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+</mule>

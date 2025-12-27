@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="error-handler-test-suite.xml"/>
+
+    <!-- ============================================== -->
+    <!-- TEST: Unauthorized Access - Missing Headers    -->
+    <!-- ============================================== -->
+    <munit:test name="unauthorized-missing-headers-test" 
+                description="Test unauthorized access when client-id header is missing"
+                expectedErrorType="MULE:CLIENT_SECURITY"
+                doc:name="Unauthorized - Missing Headers">
+        
+        <munit:execution>
+            <set-variable variableName="clientId" value="#[null]" doc:name="Set Null Client ID"/>
+            <set-variable variableName="clientSecret" value="#[null]" doc:name="Set Null Client Secret"/>
+            <flow-ref name="client-id-enforcement-sub-flow" doc:name="Call Client ID Enforcement"/>
+        </munit:execution>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: Unauthorized Access - Empty Client ID    -->
+    <!-- ============================================== -->
+    <munit:test name="unauthorized-empty-client-id-test" 
+                description="Test unauthorized access when client-id is empty"
+                expectedErrorType="MULE:CLIENT_SECURITY"
+                doc:name="Unauthorized - Empty Client ID">
+        
+        <munit:execution>
+            <set-variable variableName="clientId" value="" doc:name="Set Empty Client ID"/>
+            <set-variable variableName="clientSecret" value="valid-secret" doc:name="Set Valid Client Secret"/>
+            <flow-ref name="client-id-enforcement-sub-flow" doc:name="Call Client ID Enforcement"/>
+        </munit:execution>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: Valid Client Credentials                 -->
+    <!-- ============================================== -->
+    <munit:test name="valid-client-credentials-test" 
+                description="Test successful client ID enforcement with valid credentials"
+                doc:name="Valid Client Credentials">
+        
+        <munit:execution>
+            <set-variable variableName="clientId" value="valid-client-id" doc:name="Set Valid Client ID"/>
+            <set-variable variableName="clientSecret" value="valid-client-secret" doc:name="Set Valid Client Secret"/>
+            <flow-ref name="client-id-enforcement-sub-flow" doc:name="Call Client ID Enforcement"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.clientId]" is="#[MunitTools::equalTo('valid-client-id')]" message="Client ID should be preserved" doc:name="Assert Client ID"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: Error Response Structure                 -->
+    <!-- ============================================== -->
+    <munit:test name="error-response-structure-test" 
+                description="Test error response structure contains required fields"
+                doc:name="Error Response Structure">
+        
+        <munit:execution>
+            <set-variable variableName="httpStatus" value="400" doc:name="Set HTTP Status"/>
+            <set-variable variableName="errorCode" value="BAD_REQUEST" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Test error message" doc:name="Set Error Message"/>
+            <try doc:name="Try Generate Error">
+                <raise-error type="MULE:EXPRESSION" description="Test error"/>
+                <error-handler>
+                    <on-error-continue type="ANY">
+                        <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+                    </on-error-continue>
+                </error-handler>
+            </try>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.errorCode]" is="#[MunitTools::notNullValue()]" message="Error code should not be null" doc:name="Assert Error Code"/>
+            <munit-tools:assert-that expression="#[payload.message]" is="#[MunitTools::notNullValue()]" message="Message should not be null" doc:name="Assert Message"/>
+            <munit-tools:assert-that expression="#[payload.correlationId]" is="#[MunitTools::notNullValue()]" message="Correlation ID should not be null" doc:name="Assert Correlation ID"/>
+            <munit-tools:assert-that expression="#[payload.timestamp]" is="#[MunitTools::notNullValue()]" message="Timestamp should not be null" doc:name="Assert Timestamp"/>
+        </munit:validation>
+        
+    </munit:test>
+
+</mule>

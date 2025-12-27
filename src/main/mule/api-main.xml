@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================== -->
+    <!-- API MAIN FLOW - APIKIT ROUTER                  -->
+    <!-- ============================================== -->
+    <flow name="api-main-flow" doc:name="API Main Flow">
+        <http:listener config-ref="HTTP_Listener_Config" 
+                       path="${http.listener.basePath}/*" 
+                       doc:name="HTTP Listener">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+        
+        <!-- Log Inbound Request -->
+        <logger level="INFO" 
+                message="#['Inbound Request - CorrelationId: ' ++ correlationId ++ ' | Method: ' ++ attributes.method ++ ' | Path: ' ++ attributes.requestPath ++ ' | ClientIP: ' ++ (attributes.remoteAddress default 'unknown')]" 
+                doc:name="Log Inbound Request"/>
+        
+        <!-- Client ID Enforcement -->
+        <flow-ref name="client-id-enforcement-sub-flow" doc:name="Client ID Enforcement"/>
+        
+        <!-- APIKit Router -->
+        <apikit:router config-ref="salesforce-servicenow-api-config" doc:name="APIKit Router"/>
+        
+        <!-- Log Outbound Response -->
+        <logger level="INFO" 
+                message="#['Outbound Response - CorrelationId: ' ++ correlationId ++ ' | Status: ' ++ (vars.httpStatus default 200)]" 
+                doc:name="Log Outbound Response"/>
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- CASES ENDPOINT FLOWS                           -->
+    <!-- ============================================== -->
+    
+    <!-- POST /cases - Create ServiceNow Incident from Salesforce Case -->
+    <flow name="post:\cases:salesforce-servicenow-api-config" doc:name="POST /cases">
+        <logger level="INFO" 
+                message="#['Processing POST /cases - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Request"/>
+        <flow-ref name="create-incident-from-case-flow" doc:name="Create Incident From Case"/>
+    </flow>
+
+    <!-- GET /cases - Retrieve Salesforce Case -->
+    <flow name="get:\cases:salesforce-servicenow-api-config" doc:name="GET /cases">
+        <logger level="INFO" 
+                message="#['Processing GET /cases - CorrelationId: ' ++ correlationId ++ ' | CaseId: ' ++ (attributes.queryParams.salesforceCaseId default 'unknown')]" 
+                doc:name="Log Request"/>
+        <flow-ref name="get-salesforce-case-flow" doc:name="Get Salesforce Case"/>
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- INCIDENTS ENDPOINT FLOWS                       -->
+    <!-- ============================================== -->
+    
+    <!-- GET /incidents - Retrieve ServiceNow Incident -->
+    <flow name="get:\incidents:salesforce-servicenow-api-config" doc:name="GET /incidents">
+        <logger level="INFO" 
+                message="#['Processing GET /incidents - CorrelationId: ' ++ correlationId ++ ' | IncidentId: ' ++ (attributes.queryParams.serviceNowIncidentId default 'unknown')]" 
+                doc:name="Log Request"/>
+        <flow-ref name="get-servicenow-incident-flow" doc:name="Get ServiceNow Incident"/>
+    </flow>
+
+    <!-- PUT /incidents - Update Incident from Salesforce -->
+    <flow name="put:\incidents:salesforce-servicenow-api-config" doc:name="PUT /incidents">
+        <logger level="INFO" 
+                message="#['Processing PUT /incidents - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Request"/>
+        <flow-ref name="update-incident-flow" doc:name="Update Incident"/>
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- STATUS-SYNC ENDPOINT FLOW                      -->
+    <!-- ============================================== -->
+    
+    <!-- POST /status-sync - Sync Status Between Systems -->
+    <flow name="post:\status-sync:salesforce-servicenow-api-config" doc:name="POST /status-sync">
+        <logger level="INFO" 
+                message="#['Processing POST /status-sync - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Request"/>
+        <flow-ref name="sync-status-flow" doc:name="Sync Status"/>
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- COMMENTS ENDPOINT FLOW                         -->
+    <!-- ============================================== -->
+    
+    <!-- POST /comments - Sync Comments Between Systems -->
+    <flow name="post:\comments:salesforce-servicenow-api-config" doc:name="POST /comments">
+        <logger level="INFO" 
+                message="#['Processing POST /comments - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Request"/>
+        <flow-ref name="sync-comments-flow" doc:name="Sync Comments"/>
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- SLA ENDPOINT FLOW                              -->
+    <!-- ============================================== -->
+    
+    <!-- GET /sla - Retrieve SLA Details -->
+    <flow name="get:\sla:salesforce-servicenow-api-config" doc:name="GET /sla">
+        <logger level="INFO" 
+                message="#['Processing GET /sla - CorrelationId: ' ++ correlationId ++ ' | ParentId: ' ++ (attributes.queryParams.parentId default 'unknown')]" 
+                doc:name="Log Request"/>
+        <flow-ref name="get-sla-details-flow" doc:name="Get SLA Details"/>
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- HEALTH CHECK ENDPOINT FLOW                     -->
+    <!-- ============================================== -->
+    
+    <!-- GET /health - Health Check -->
+    <flow name="get:\health:salesforce-servicenow-api-config" doc:name="GET /health">
+        <logger level="INFO" 
+                message="#['Processing GET /health - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Request"/>
+        <flow-ref name="health-check-flow" doc:name="Health Check"/>
+    </flow>
+
+</mule>

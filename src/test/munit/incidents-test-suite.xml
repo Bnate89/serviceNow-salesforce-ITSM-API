@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="incidents-test-suite.xml"/>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /incidents - Retrieve Incident       -->
+    <!-- ============================================== -->
+    <munit:test name="get-incidents-retrieve-success-test" 
+                description="Test successful retrieval of ServiceNow incident"
+                doc:name="GET /incidents - Retrieve Success">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Get Incident -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Get Incident">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": { "sys_id": "abc123def456", "number": "INC0010001", "short_description": "Test Incident", "description": "Test Description", "state": "2", "priority": "2", "assignment_group": { "display_value": "IT Support" }, "assigned_to": { "display_value": "John Doe" }, "opened_at": "2025-01-15T10:00:00Z" } }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-variable variableName="serviceNowIncidentId" value="abc123def456" doc:name="Set Incident ID"/>
+            <flow-ref name="get-servicenow-incident-flow" doc:name="Call Get Incident Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.serviceNowIncidentId]" is="#[MunitTools::equalTo('abc123def456')]" message="Incident ID should match" doc:name="Assert Incident ID"/>
+            <munit-tools:assert-that expression="#[payload.number]" is="#[MunitTools::equalTo('INC0010001')]" message="Incident number should match" doc:name="Assert Incident Number"/>
+            <munit-tools:assert-that expression="#[payload.state]" is="#[MunitTools::equalTo('In Progress')]" message="State should be mapped correctly" doc:name="Assert State"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: PUT /incidents - Update Incident         -->
+    <!-- ============================================== -->
+    <munit:test name="put-incidents-update-success-test" 
+                description="Test successful update of ServiceNow incident"
+                doc:name="PUT /incidents - Update Success">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Update Incident -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Update">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": { "sys_id": "abc123def456", "number": "INC0010001", "short_description": "Updated Incident", "description": "Updated Description", "state": "6", "priority": "2", "opened_at": "2025-01-15T10:00:00Z" } }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store Contains -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasCaseMapping" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "serviceNowIncidentId": "abc123def456", "shortDescription": "Updated Incident", "description": "Updated Description", "state": "Resolved", "priority": "High" }]' doc:name="Set Incident Payload"/>
+            <set-variable variableName="incidentPayload" value="#[payload]" doc:name="Store Incident Payload"/>
+            <flow-ref name="update-incident-flow" doc:name="Call Update Incident Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.serviceNowIncidentId]" is="#[MunitTools::equalTo('abc123def456')]" message="Incident ID should match" doc:name="Assert Incident ID"/>
+            <munit-tools:assert-that expression="#[payload.state]" is="#[MunitTools::equalTo('Resolved')]" message="State should be Resolved" doc:name="Assert State"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /incidents - Not Found               -->
+    <!-- ============================================== -->
+    <munit:test name="get-incidents-not-found-test" 
+                description="Test incident not found handling"
+                expectedErrorType="MULE:ROUTING"
+                doc:name="GET /incidents - Not Found">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Not Found -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Not Found">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="HTTP:NOT_FOUND"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-variable variableName="serviceNowIncidentId" value="nonexistent123" doc:name="Set Invalid Incident ID"/>
+            <flow-ref name="get-servicenow-incident-flow" doc:name="Call Get Incident Flow"/>
+        </munit:execution>
+        
+    </munit:test>
+
+</mule>

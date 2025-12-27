@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================== -->
+    <!-- CLIENT ID ENFORCEMENT SUB-FLOW                 -->
+    <!-- Validates client-id and client-secret headers  -->
+    <!-- ============================================== -->
+    <sub-flow name="client-id-enforcement-sub-flow" doc:name="Client ID Enforcement Sub-Flow">
+        
+        <!-- Extract Client Credentials from Headers -->
+        <set-variable variableName="clientId" 
+                      value="#[attributes.headers.'client-id']" 
+                      doc:name="Extract Client ID"/>
+        <set-variable variableName="clientSecret" 
+                      value="#[attributes.headers.'client-secret']" 
+                      doc:name="Extract Client Secret"/>
+        
+        <!-- Validate Client Credentials -->
+        <choice doc:name="Validate Credentials">
+            <when expression="#[isEmpty(vars.clientId) or isEmpty(vars.clientSecret)]">
+                <logger level="WARN" 
+                        message="#['Client ID Enforcement Failed - Missing credentials - CorrelationId: ' ++ correlationId]" 
+                        doc:name="Log Missing Credentials"/>
+                <set-variable variableName="httpStatus" value="401" doc:name="Set HTTP Status 401"/>
+                <raise-error type="MULE:CLIENT_SECURITY" 
+                             description="Missing client-id or client-secret header" 
+                             doc:name="Raise Unauthorized Error"/>
+            </when>
+            <otherwise>
+                <!-- 
+                    In production, this would validate against API Manager or a credential store.
+                    The actual validation is handled by API Gateway policies when deployed to CloudHub/RTF.
+                    This sub-flow provides a fallback validation mechanism.
+                -->
+                <logger level="DEBUG" 
+                        message="#['Client ID Enforcement - Credentials present - CorrelationId: ' ++ correlationId]" 
+                        doc:name="Log Credentials Present"/>
+            </otherwise>
+        </choice>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- VALIDATE CLIENT CREDENTIALS SUB-FLOW           -->
+    <!-- Extended validation for local development      -->
+    <!-- ============================================== -->
+    <sub-flow name="validate-client-credentials-sub-flow" doc:name="Validate Client Credentials Sub-Flow">
+        
+        <!-- 
+            This sub-flow can be extended to validate credentials against:
+            - Object Store (cached credentials)
+            - External Identity Provider
+            - Database
+            
+            For production deployments with API Manager, the Client ID Enforcement
+            policy handles this automatically.
+        -->
+        <choice doc:name="Validate Against Store">
+            <when expression="#[vars.clientId != null and vars.clientSecret != null]">
+                <logger level="DEBUG" 
+                        message="#['Credentials validated successfully - CorrelationId: ' ++ correlationId]" 
+                        doc:name="Log Validation Success"/>
+            </when>
+            <otherwise>
+                <set-variable variableName="httpStatus" value="401" doc:name="Set HTTP Status 401"/>
+                <raise-error type="MULE:CLIENT_SECURITY" 
+                             description="Invalid client credentials" 
+                             doc:name="Raise Invalid Credentials Error"/>
+            </otherwise>
+        </choice>
+        
+    </sub-flow>
+
+</mule>

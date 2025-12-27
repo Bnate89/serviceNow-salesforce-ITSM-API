@@ -1,0 +1,23 @@
+# Secure Properties Configuration - Development Environment
+# All values must be encrypted using AES/CBC algorithm
+# Use: secure-properties-tool to encrypt values
+
+salesforce:
+  credentials:
+    clientId: "![encrypted-dev-salesforce-client-id]"
+    clientSecret: "![encrypted-dev-salesforce-client-secret]"
+    username: "![encrypted-dev-salesforce-username]"
+    password: "![encrypted-dev-salesforce-password]"
+    securityToken: "![encrypted-dev-salesforce-security-token]"
+
+servicenow:
+  credentials:
+    username: "![encrypted-dev-servicenow-username]"
+    password: "![encrypted-dev-servicenow-password]"
+    clientId: "![encrypted-dev-servicenow-client-id]"
+    clientSecret: "![encrypted-dev-servicenow-client-secret]"
+
+anypoint:
+  platform:
+    clientId: "![encrypted-dev-anypoint-client-id]"
+    clientSecret: "![encrypted-dev-anypoint-client-secret]"

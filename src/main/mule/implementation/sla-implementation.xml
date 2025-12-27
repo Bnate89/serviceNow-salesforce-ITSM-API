@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================== -->
+    <!-- GET SLA DETAILS FLOW                           -->
+    <!-- GET /sla - Retrieves SLA details               -->
+    <!-- ============================================== -->
+    <flow name="get-sla-details-flow" doc:name="Get SLA Details Flow">
+        
+        <!-- Extract query parameter -->
+        <set-variable variableName="parentId" 
+                      value="#[attributes.queryParams.parentId]" 
+                      doc:name="Extract Parent ID"/>
+        
+        <logger level="INFO" 
+                message="#['Retrieving SLA details - ParentId: ' ++ vars.parentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log SLA Retrieval"/>
+        
+        <!-- Determine if this is a ServiceNow incident or Salesforce case -->
+        <choice doc:name="Determine Source System">
+            <!-- ServiceNow Incident (sys_id format or INC prefix) -->
+            <when expression="#[vars.parentId startsWith 'INC' or sizeOf(vars.parentId) == 32]">
+                <flow-ref name="get-servicenow-sla-sub-flow" doc:name="Get ServiceNow SLA"/>
+            </when>
+            <!-- Salesforce Case (15 or 18 character ID) -->
+            <otherwise>
+                <flow-ref name="get-salesforce-sla-sub-flow" doc:name="Get Salesforce SLA"/>
+            </otherwise>
+        </choice>
+        
+        <!-- Set response status -->
+        <set-variable variableName="httpStatus" value="200" doc:name="Set HTTP Status 200"/>
+        
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- GET SERVICENOW SLA SUB-FLOW                    -->
+    <!-- ============================================== -->
+    <sub-flow name="get-servicenow-sla-sub-flow" doc:name="Get ServiceNow SLA Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Retrieving SLA from ServiceNow - ParentId: ' ++ vars.parentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log ServiceNow SLA Call"/>
+        
+        <try doc:name="Try Get ServiceNow SLA">
+            <!-- Query ServiceNow Task SLA table -->
+            <http:request method="GET" 
+                          config-ref="ServiceNow_HTTP_Request_Config" 
+                          path="${servicenow.api.basePath}/task_sla"
+                          doc:name="Get SLA from ServiceNow">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Basic " ++ (p('secure::servicenow.credentials.username') ++ ":" ++ p('secure::servicenow.credentials.password')) as Binary as String {encoding: "Base64"}
+}]]]></http:headers>
+                <http:query-params><![CDATA[#[{
+    "sysparm_query": "task=" ++ vars.parentId,
+    "sysparm_limit": "1"
+}]]]></http:query-params>
+            </http:request>
+            
+            <!-- Transform ServiceNow SLA response -->
+            <ee:transform doc:name="Transform ServiceNow SLA Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var result = (payload.result default [])[0] default {}
+var hasBreached = result.has_breached default "false"
+---
+{
+    parentId: vars.parentId,
+    slaType: result.sla.display_value default result.sla default "Response SLA",
+    dueDate: if (isEmpty(result.planned_end_time)) 
+                now() + |P1D| as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"} 
+             else 
+                result.planned_end_time,
+    breached: hasBreached == "true" or hasBreached == true
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:NOT_FOUND" doc:name="SLA Not Found">
+                    <logger level="WARN" 
+                            message="#['ServiceNow SLA not found - ParentId: ' ++ vars.parentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Not Found"/>
+                    <!-- Return default SLA response -->
+                    <ee:transform doc:name="Build Default SLA Response">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    parentId: vars.parentId,
+    slaType: "Default SLA",
+    dueDate: (now() + |P1D|) as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+    breached: false
+}]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                </on-error-propagate>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="ServiceNow Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['ServiceNow API connectivity error during SLA retrieval - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="ServiceNow service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- GET SALESFORCE SLA SUB-FLOW                    -->
+    <!-- ============================================== -->
+    <sub-flow name="get-salesforce-sla-sub-flow" doc:name="Get Salesforce SLA Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Retrieving SLA from Salesforce - ParentId: ' ++ vars.parentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Salesforce SLA Call"/>
+        
+        <try doc:name="Try Get Salesforce SLA">
+            <!-- Get OAuth Token -->
+            <flow-ref name="get-salesforce-oauth-token-sub-flow" doc:name="Get Salesforce OAuth Token"/>
+            
+            <!-- Query Salesforce Entitlement/SLA -->
+            <http:request method="GET" 
+                          config-ref="Salesforce_HTTP_Request_Config" 
+                          path="${salesforce.api.basePath}/query"
+                          doc:name="Get SLA from Salesforce">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Bearer " ++ vars.salesforceAccessToken
+}]]]></http:headers>
+                <http:query-params><![CDATA[#[{
+    "q": "SELECT Id, CaseId, MilestoneType.Name, TargetDate, IsViolated FROM CaseMilestone WHERE CaseId = '" ++ vars.parentId ++ "' LIMIT 1"
+}]]]></http:query-params>
+            </http:request>
+            
+            <!-- Transform Salesforce SLA response -->
+            <ee:transform doc:name="Transform Salesforce SLA Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var record = (payload.records default [])[0] default {}
+---
+{
+    parentId: vars.parentId,
+    slaType: record.MilestoneType.Name default "Response SLA",
+    dueDate: if (isEmpty(record.TargetDate)) 
+                (now() + |P1D|) as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"} 
+             else 
+                record.TargetDate,
+    breached: record.IsViolated default false
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:NOT_FOUND" doc:name="SLA Not Found">
+                    <logger level="WARN" 
+                            message="#['Salesforce SLA not found - ParentId: ' ++ vars.parentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Not Found"/>
+                    <!-- Return default SLA response -->
+                    <ee:transform doc:name="Build Default SLA Response">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    parentId: vars.parentId,
+    slaType: "Default SLA",
+    dueDate: (now() + |P1D|) as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+    breached: false
+}]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                </on-error-propagate>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="Salesforce Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['Salesforce API connectivity error during SLA retrieval - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="Salesforce service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+</mule>

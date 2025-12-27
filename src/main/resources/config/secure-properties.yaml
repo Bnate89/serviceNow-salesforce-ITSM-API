@@ -1,0 +1,23 @@
+# Secure Properties Configuration - Base Template
+# All values must be encrypted using AES/CBC algorithm
+# Use: secure-properties-tool to encrypt values
+
+salesforce:
+  credentials:
+    clientId: "![encrypted-salesforce-client-id]"
+    clientSecret: "![encrypted-salesforce-client-secret]"
+    username: "![encrypted-salesforce-username]"
+    password: "![encrypted-salesforce-password]"
+    securityToken: "![encrypted-salesforce-security-token]"
+
+servicenow:
+  credentials:
+    username: "![encrypted-servicenow-username]"
+    password: "![encrypted-servicenow-password]"
+    clientId: "![encrypted-servicenow-client-id]"
+    clientSecret: "![encrypted-servicenow-client-secret]"
+
+anypoint:
+  platform:
+    clientId: "![encrypted-anypoint-client-id]"
+    clientSecret: "![encrypted-anypoint-client-secret]"

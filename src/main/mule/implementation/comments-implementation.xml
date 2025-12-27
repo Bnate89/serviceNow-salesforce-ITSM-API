@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================== -->
+    <!-- SYNC COMMENTS FLOW                             -->
+    <!-- POST /comments - Sync comments between systems -->
+    <!-- ============================================== -->
+    <flow name="sync-comments-flow" doc:name="Sync Comments Flow">
+        
+        <!-- Store original payload -->
+        <set-variable variableName="commentPayload" value="#[payload]" doc:name="Store Comment Payload"/>
+        
+        <logger level="INFO" 
+                message="#['Processing comment sync - ParentId: ' ++ payload.parentId ++ ' | SourceSystem: ' ++ payload.sourceSystem ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Comment Sync"/>
+        
+        <!-- Determine target system and sync -->
+        <choice doc:name="Determine Target System">
+            <!-- From Salesforce to ServiceNow -->
+            <when expression="#[lower(payload.sourceSystem) == 'salesforce']">
+                <flow-ref name="sync-comment-to-servicenow-sub-flow" doc:name="Sync Comment to ServiceNow"/>
+            </when>
+            <!-- From ServiceNow to Salesforce -->
+            <when expression="#[lower(payload.sourceSystem) == 'servicenow']">
+                <flow-ref name="sync-comment-to-salesforce-sub-flow" doc:name="Sync Comment to Salesforce"/>
+            </when>
+            <otherwise>
+                <logger level="WARN" 
+                        message="#['Unknown source system: ' ++ payload.sourceSystem ++ ' - CorrelationId: ' ++ correlationId]" 
+                        doc:name="Log Unknown Source"/>
+                <raise-error type="MULE:EXPRESSION" description="#['Unknown source system: ' ++ payload.sourceSystem]"/>
+            </otherwise>
+        </choice>
+        
+        <!-- Set response status -->
+        <set-variable variableName="httpStatus" value="201" doc:name="Set HTTP Status 201"/>
+        
+        <logger level="INFO" 
+                message="#['Comment sync completed successfully - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Success"/>
+        
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- SYNC COMMENT TO SERVICENOW SUB-FLOW            -->
+    <!-- ============================================== -->
+    <sub-flow name="sync-comment-to-servicenow-sub-flow" doc:name="Sync Comment to ServiceNow Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Syncing comment from Salesforce to ServiceNow - ParentId: ' ++ vars.commentPayload.parentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Sync Direction"/>
+        
+        <!-- Transform to ServiceNow work note format -->
+        <ee:transform doc:name="Transform to ServiceNow Work Note">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    element_id: vars.commentPayload.parentId,
+    name: "incident",
+    value: "[Salesforce Comment by " ++ vars.commentPayload.createdBy ++ "]\n" ++ vars.commentPayload.message
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- Create work note in ServiceNow -->
+        <try doc:name="Try Create ServiceNow Work Note">
+            <http:request method="POST" 
+                          config-ref="ServiceNow_HTTP_Request_Config" 
+                          path="${servicenow.api.basePath}/sys_journal_field"
+                          doc:name="Create Work Note in ServiceNow">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Basic " ++ (p('secure::servicenow.credentials.username') ++ ":" ++ p('secure::servicenow.credentials.password')) as Binary as String {encoding: "Base64"}
+}]]]></http:headers>
+            </http:request>
+            
+            <!-- Build response -->
+            <ee:transform doc:name="Build Comment Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var result = payload.result default payload
+---
+{
+    parentId: vars.commentPayload.parentId,
+    sourceSystem: vars.commentPayload.sourceSystem,
+    message: vars.commentPayload.message,
+    createdBy: vars.commentPayload.createdBy,
+    createdDate: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="ServiceNow Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['ServiceNow API connectivity error during comment sync - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="ServiceNow service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- SYNC COMMENT TO SALESFORCE SUB-FLOW            -->
+    <!-- ============================================== -->
+    <sub-flow name="sync-comment-to-salesforce-sub-flow" doc:name="Sync Comment to Salesforce Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Syncing comment from ServiceNow to Salesforce - ParentId: ' ++ vars.commentPayload.parentId ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Sync Direction"/>
+        
+        <!-- Transform to Salesforce CaseComment format -->
+        <ee:transform doc:name="Transform to Salesforce Case Comment">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    ParentId: vars.commentPayload.parentId,
+    CommentBody: "[ServiceNow Work Note by " ++ vars.commentPayload.createdBy ++ "]\n" ++ vars.commentPayload.message,
+    IsPublished: false
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- Get OAuth Token and Create Salesforce Case Comment -->
+        <try doc:name="Try Create Salesforce Comment">
+            <!-- Get OAuth Token -->
+            <flow-ref name="get-salesforce-oauth-token-sub-flow" doc:name="Get Salesforce OAuth Token"/>
+            
+            <http:request method="POST" 
+                          config-ref="Salesforce_HTTP_Request_Config" 
+                          path="${salesforce.api.basePath}/sobjects/CaseComment"
+                          doc:name="Create Case Comment in Salesforce">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Bearer " ++ vars.salesforceAccessToken
+}]]]></http:headers>
+            </http:request>
+            
+            <!-- Build response -->
+            <ee:transform doc:name="Build Comment Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    parentId: vars.commentPayload.parentId,
+    sourceSystem: vars.commentPayload.sourceSystem,
+    message: vars.commentPayload.message,
+    createdBy: vars.commentPayload.createdBy,
+    createdDate: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="Salesforce Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['Salesforce API connectivity error during comment sync - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="Salesforce service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+</mule>

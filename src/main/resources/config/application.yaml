@@ -1,0 +1,48 @@
+# Application Configuration - Base
+# ServiceNow <-> Salesforce ITSM Integration API
+
+api:
+  name: "salesforce-servicenow-api"
+  version: "v1"
+  basePath: "/api/v1"
+  id: "${api.autodiscovery.id}"
+
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8081"
+    basePath: "/api/v1"
+  request:
+    connectionTimeout: "30000"
+    responseTimeout: "60000"
+    connectionIdleTimeout: "30000"
+
+salesforce:
+  api:
+    host: "${salesforce.instance.host}"
+    basePath: "/services/data/v58.0"
+    port: "443"
+    protocol: "HTTPS"
+  oauth:
+    tokenUrl: "/services/oauth2/token"
+
+servicenow:
+  api:
+    host: "${servicenow.instance.host}"
+    basePath: "/api/now/table"
+    port: "443"
+    protocol: "HTTPS"
+
+retry:
+  maxAttempts: "3"
+  frequency: "5000"
+
+objectstore:
+  entryTtl: "1"
+  entryTtlUnit: "HOURS"
+  maxEntries: "1000"
+  expirationInterval: "30"
+
+logging:
+  level: "INFO"
+  maskFields: "password,secret,token,authorization"

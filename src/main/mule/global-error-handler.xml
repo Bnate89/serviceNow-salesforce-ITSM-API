@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================== -->
+    <!-- GLOBAL API ERROR HANDLER                       -->
+    <!-- ============================================== -->
+    <error-handler name="global-api-error-handler" doc:name="Global API Error Handler">
+        
+        <!-- 400 - BAD REQUEST -->
+        <on-error-propagate type="APIKIT:BAD_REQUEST, EXPRESSION, MULE:EXPRESSION" 
+                            logException="true" 
+                            doc:name="400 Bad Request">
+            <set-variable variableName="httpStatus" value="400" doc:name="Set HTTP Status 400"/>
+            <set-variable variableName="errorCode" value="BAD_REQUEST" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Invalid request format or missing required parameters" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 401 - UNAUTHORIZED -->
+        <on-error-propagate type="HTTP:UNAUTHORIZED, APIKIT:NOT_ACCEPTABLE, MULE:CLIENT_SECURITY" 
+                            logException="true" 
+                            doc:name="401 Unauthorized">
+            <set-variable variableName="httpStatus" value="401" doc:name="Set HTTP Status 401"/>
+            <set-variable variableName="errorCode" value="UNAUTHORIZED" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Authentication failed. Invalid or missing credentials" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 403 - FORBIDDEN -->
+        <on-error-propagate type="MULE:FORBIDDEN, HTTP:FORBIDDEN" 
+                            logException="true" 
+                            doc:name="403 Forbidden">
+            <set-variable variableName="httpStatus" value="403" doc:name="Set HTTP Status 403"/>
+            <set-variable variableName="errorCode" value="FORBIDDEN" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Access denied. Insufficient permissions" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 404 - NOT FOUND -->
+        <on-error-propagate type="APIKIT:NOT_FOUND, HTTP:NOT_FOUND, MULE:ROUTING" 
+                            logException="true" 
+                            doc:name="404 Not Found">
+            <set-variable variableName="httpStatus" value="404" doc:name="Set HTTP Status 404"/>
+            <set-variable variableName="errorCode" value="NOT_FOUND" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Resource not found" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 405 - METHOD NOT ALLOWED -->
+        <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED" 
+                            logException="true" 
+                            doc:name="405 Method Not Allowed">
+            <set-variable variableName="httpStatus" value="405" doc:name="Set HTTP Status 405"/>
+            <set-variable variableName="errorCode" value="METHOD_NOT_ALLOWED" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="HTTP method not allowed for this resource" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 415 - UNSUPPORTED MEDIA TYPE -->
+        <on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE" 
+                            logException="true" 
+                            doc:name="415 Unsupported Media Type">
+            <set-variable variableName="httpStatus" value="415" doc:name="Set HTTP Status 415"/>
+            <set-variable variableName="errorCode" value="UNSUPPORTED_MEDIA_TYPE" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Content type not supported" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 502 - BAD GATEWAY -->
+        <on-error-propagate type="HTTP:BAD_GATEWAY, HTTP:CONNECTIVITY" 
+                            logException="true" 
+                            doc:name="502 Bad Gateway">
+            <set-variable variableName="httpStatus" value="502" doc:name="Set HTTP Status 502"/>
+            <set-variable variableName="errorCode" value="BAD_GATEWAY" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Downstream service unavailable" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 504 - GATEWAY TIMEOUT -->
+        <on-error-propagate type="HTTP:TIMEOUT, MULE:TIMEOUT" 
+                            logException="true" 
+                            doc:name="504 Gateway Timeout">
+            <set-variable variableName="httpStatus" value="504" doc:name="Set HTTP Status 504"/>
+            <set-variable variableName="errorCode" value="GATEWAY_TIMEOUT" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="Downstream service timeout" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+        <!-- 500 - INTERNAL SERVER ERROR (Catch-All) -->
+        <on-error-propagate type="ANY" 
+                            logException="true" 
+                            doc:name="500 Internal Server Error">
+            <set-variable variableName="httpStatus" value="500" doc:name="Set HTTP Status 500"/>
+            <set-variable variableName="errorCode" value="INTERNAL_SERVER_ERROR" doc:name="Set Error Code"/>
+            <set-variable variableName="errorMessage" value="An unexpected error occurred" doc:name="Set Error Message"/>
+            <flow-ref name="generate-error-response-sub-flow" doc:name="Generate Error Response"/>
+        </on-error-propagate>
+
+    </error-handler>
+
+    <!-- ============================================== -->
+    <!-- ERROR RESPONSE GENERATOR SUB-FLOW              -->
+    <!-- ============================================== -->
+    <sub-flow name="generate-error-response-sub-flow" doc:name="Generate Error Response Sub-Flow">
+        <logger level="ERROR" 
+                message="#['Error occurred - CorrelationId: ' ++ correlationId ++ ' | ErrorCode: ' ++ vars.errorCode ++ ' | ErrorType: ' ++ (error.errorType.namespace default 'UNKNOWN') ++ ':' ++ (error.errorType.identifier default 'UNKNOWN') ++ ' | Description: ' ++ (error.description default 'No description')]" 
+                doc:name="Log Error"/>
+        
+        <ee:transform doc:name="Build Error Response">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    errorCode: vars.errorCode,
+    message: vars.errorMessage default "Error processing data",
+    correlationId: correlationId,
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"}
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </sub-flow>
+
+</mule>

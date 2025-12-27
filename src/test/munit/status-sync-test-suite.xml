@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="status-sync-test-suite.xml"/>
+
+    <!-- ============================================== -->
+    <!-- TEST: POST /status-sync - SF to SN Success     -->
+    <!-- ============================================== -->
+    <munit:test name="post-status-sync-sf-to-sn-success-test" 
+                description="Test successful status sync from Salesforce to ServiceNow"
+                doc:name="POST /status-sync - SF to SN Success">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Update -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Update">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": { "sys_id": "abc123", "state": "2" } }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "sourceId": "SF5001234567890ABC", "targetId": "abc123def456", "sourceStatus": "Working", "targetStatus": "", "updatedAt": "2025-01-15T10:00:00Z" }]' doc:name="Set Status Sync Payload"/>
+            <set-variable variableName="statusSyncPayload" value="#[payload]" doc:name="Store Payload"/>
+            <flow-ref name="sync-status-flow" doc:name="Call Sync Status Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.sourceId]" is="#[MunitTools::equalTo('SF5001234567890ABC')]" message="Source ID should match" doc:name="Assert Source ID"/>
+            <munit-tools:assert-that expression="#[payload.targetStatus]" is="#[MunitTools::notNullValue()]" message="Target status should not be null" doc:name="Assert Target Status"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: POST /status-sync - SN to SF Success     -->
+    <!-- ============================================== -->
+    <munit:test name="post-status-sync-sn-to-sf-success-test" 
+                description="Test successful status sync from ServiceNow to Salesforce"
+                doc:name="POST /status-sync - SN to SF Success">
+        
+        <munit:behavior>
+            <!-- Mock Salesforce OAuth -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce OAuth">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Request OAuth Token"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "access_token": "mock_token", "token_type": "Bearer" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Salesforce Update -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce Update">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Update Salesforce Case Status"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "id": "5001234567890ABC", "success": true }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasToken" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-payload value='#[%dw 2.0 output application/json --- { "sourceId": "INC0010001", "targetId": "5001234567890ABC", "sourceStatus": "In Progress", "targetStatus": "", "updatedAt": "2025-01-15T10:00:00Z" }]' doc:name="Set Status Sync Payload"/>
+            <set-variable variableName="statusSyncPayload" value="#[payload]" doc:name="Store Payload"/>
+            <flow-ref name="sync-status-flow" doc:name="Call Sync Status Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.sourceId]" is="#[MunitTools::equalTo('INC0010001')]" message="Source ID should match" doc:name="Assert Source ID"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+</mule>

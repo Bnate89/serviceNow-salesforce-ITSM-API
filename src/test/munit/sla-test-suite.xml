@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <munit:config name="sla-test-suite.xml"/>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /sla - ServiceNow SLA Success        -->
+    <!-- ============================================== -->
+    <munit:test name="get-sla-servicenow-success-test" 
+                description="Test successful SLA retrieval from ServiceNow"
+                doc:name="GET /sla - ServiceNow Success">
+        
+        <munit:behavior>
+            <!-- Mock ServiceNow Get SLA -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock ServiceNow Get SLA">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="config-ref" whereValue="ServiceNow_HTTP_Request_Config"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "result": [{ "sys_id": "sla123", "sla": { "display_value": "Response SLA" }, "planned_end_time": "2025-01-16T10:00:00Z", "has_breached": "false" }] }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-variable variableName="parentId" value="abc123def456789012345678901234" doc:name="Set Parent ID (32 char)"/>
+            <flow-ref name="get-sla-details-flow" doc:name="Call Get SLA Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.parentId]" is="#[MunitTools::notNullValue()]" message="Parent ID should not be null" doc:name="Assert Parent ID"/>
+            <munit-tools:assert-that expression="#[payload.slaType]" is="#[MunitTools::equalTo('Response SLA')]" message="SLA type should match" doc:name="Assert SLA Type"/>
+            <munit-tools:assert-that expression="#[payload.breached]" is="#[MunitTools::equalTo(false)]" message="Breached should be false" doc:name="Assert Breached"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+    <!-- ============================================== -->
+    <!-- TEST: GET /sla - Salesforce SLA Success        -->
+    <!-- ============================================== -->
+    <munit:test name="get-sla-salesforce-success-test" 
+                description="Test successful SLA retrieval from Salesforce"
+                doc:name="GET /sla - Salesforce Success">
+        
+        <munit:behavior>
+            <!-- Mock Salesforce OAuth -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce OAuth">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Request OAuth Token"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "access_token": "mock_token", "token_type": "Bearer" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Salesforce Get SLA -->
+            <munit-tools:mock-when processor="http:request" doc:name="Mock Salesforce Get SLA">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute attributeName="doc:name" whereValue="Get SLA from Salesforce"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[%dw 2.0 output application/json --- { "totalSize": 1, "done": true, "records": [{ "Id": "milestone123", "CaseId": "5001234567890ABC", "MilestoneType": { "Name": "First Response" }, "TargetDate": "2025-01-16T10:00:00.000+0000", "IsViolated": false }] }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <!-- Mock Object Store -->
+            <munit-tools:mock-when processor="os:contains" doc:name="Mock OS Contains">
+                <munit-tools:then-return>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="hasToken" value="#[false]"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            
+            <munit-tools:mock-when processor="os:store" doc:name="Mock OS Store">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        
+        <munit:execution>
+            <set-variable variableName="parentId" value="5001234567890ABC" doc:name="Set Parent ID (SF Case)"/>
+            <flow-ref name="get-sla-details-flow" doc:name="Call Get SLA Flow"/>
+        </munit:execution>
+        
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.parentId]" is="#[MunitTools::equalTo('5001234567890ABC')]" message="Parent ID should match" doc:name="Assert Parent ID"/>
+            <munit-tools:assert-that expression="#[payload.slaType]" is="#[MunitTools::equalTo('First Response')]" message="SLA type should match" doc:name="Assert SLA Type"/>
+            <munit-tools:assert-that expression="#[payload.breached]" is="#[MunitTools::equalTo(false)]" message="Breached should be false" doc:name="Assert Breached"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('200')]" message="HTTP status should be 200" doc:name="Assert HTTP Status"/>
+        </munit:validation>
+        
+    </munit:test>
+
+</mule>

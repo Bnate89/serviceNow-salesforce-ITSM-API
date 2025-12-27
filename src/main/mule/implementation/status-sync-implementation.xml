@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- ============================================== -->
+    <!-- SYNC STATUS FLOW                               -->
+    <!-- POST /status-sync - Bi-directional sync        -->
+    <!-- ============================================== -->
+    <flow name="sync-status-flow" doc:name="Sync Status Flow">
+        
+        <!-- Store original payload -->
+        <set-variable variableName="statusSyncPayload" value="#[payload]" doc:name="Store Status Sync Payload"/>
+        
+        <logger level="INFO" 
+                message="#['Processing status sync - SourceId: ' ++ payload.sourceId ++ ' | TargetId: ' ++ payload.targetId ++ ' | SourceStatus: ' ++ payload.sourceStatus ++ ' - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Status Sync"/>
+        
+        <!-- Determine sync direction and execute -->
+        <choice doc:name="Determine Sync Direction">
+            <!-- Salesforce to ServiceNow -->
+            <when expression="#[payload.sourceId startsWith 'SF' or payload.sourceId matches /^[a-zA-Z0-9]{15,18}$/]">
+                <flow-ref name="sync-status-salesforce-to-servicenow-sub-flow" doc:name="Sync SF to SN"/>
+            </when>
+            <!-- ServiceNow to Salesforce -->
+            <otherwise>
+                <flow-ref name="sync-status-servicenow-to-salesforce-sub-flow" doc:name="Sync SN to SF"/>
+            </otherwise>
+        </choice>
+        
+        <!-- Set response status -->
+        <set-variable variableName="httpStatus" value="200" doc:name="Set HTTP Status 200"/>
+        
+        <logger level="INFO" 
+                message="#['Status sync completed successfully - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Success"/>
+        
+    </flow>
+
+    <!-- ============================================== -->
+    <!-- SYNC STATUS SALESFORCE TO SERVICENOW SUB-FLOW  -->
+    <!-- ============================================== -->
+    <sub-flow name="sync-status-salesforce-to-servicenow-sub-flow" doc:name="Sync Status SF to SN Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Syncing status from Salesforce to ServiceNow - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Sync Direction"/>
+        
+        <!-- Map Salesforce status to ServiceNow state -->
+        <ee:transform doc:name="Map SF Status to SN State">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var statusToStateMapping = {
+    "New": "1",
+    "Working": "2",
+    "Escalated": "3",
+    "Closed": "7",
+    "On Hold": "3",
+    "Waiting on Customer": "3"
+}
+---
+{
+    state: statusToStateMapping[vars.statusSyncPayload.sourceStatus] default "2"
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- Update ServiceNow Incident -->
+        <try doc:name="Try Update ServiceNow">
+            <http:request method="PATCH" 
+                          config-ref="ServiceNow_HTTP_Request_Config" 
+                          path="#['${servicenow.api.basePath}/incident/' ++ vars.statusSyncPayload.targetId]"
+                          doc:name="Update ServiceNow Incident Status">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Basic " ++ (p('secure::servicenow.credentials.username') ++ ":" ++ p('secure::servicenow.credentials.password')) as Binary as String {encoding: "Base64"}
+}]]]></http:headers>
+            </http:request>
+            
+            <!-- Build response -->
+            <ee:transform doc:name="Build Sync Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var stateMapping = {
+    "1": "New",
+    "2": "In Progress",
+    "3": "On Hold",
+    "6": "Resolved",
+    "7": "Closed"
+}
+var result = payload.result default payload
+---
+{
+    sourceId: vars.statusSyncPayload.sourceId,
+    targetId: vars.statusSyncPayload.targetId,
+    sourceStatus: vars.statusSyncPayload.sourceStatus,
+    targetStatus: stateMapping[result.state default "2"] default "In Progress",
+    updatedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="ServiceNow Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['ServiceNow API connectivity error during status sync - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="ServiceNow service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+    <!-- ============================================== -->
+    <!-- SYNC STATUS SERVICENOW TO SALESFORCE SUB-FLOW  -->
+    <!-- ============================================== -->
+    <sub-flow name="sync-status-servicenow-to-salesforce-sub-flow" doc:name="Sync Status SN to SF Sub-Flow">
+        
+        <logger level="DEBUG" 
+                message="#['Syncing status from ServiceNow to Salesforce - CorrelationId: ' ++ correlationId]" 
+                doc:name="Log Sync Direction"/>
+        
+        <!-- Map ServiceNow state to Salesforce status -->
+        <ee:transform doc:name="Map SN State to SF Status">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var stateToStatusMapping = {
+    "New": "New",
+    "In Progress": "Working",
+    "On Hold": "Escalated",
+    "Resolved": "Closed",
+    "Closed": "Closed",
+    "1": "New",
+    "2": "Working",
+    "3": "Escalated",
+    "6": "Closed",
+    "7": "Closed"
+}
+---
+{
+    Status: stateToStatusMapping[vars.statusSyncPayload.sourceStatus] default "Working"
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        
+        <!-- Get OAuth Token and Update Salesforce Case -->
+        <try doc:name="Try Update Salesforce">
+            <!-- Get OAuth Token -->
+            <flow-ref name="get-salesforce-oauth-token-sub-flow" doc:name="Get Salesforce OAuth Token"/>
+            
+            <http:request method="PATCH" 
+                          config-ref="Salesforce_HTTP_Request_Config" 
+                          path="#['${salesforce.api.basePath}/sobjects/Case/' ++ vars.statusSyncPayload.targetId]"
+                          doc:name="Update Salesforce Case Status">
+                <http:headers><![CDATA[#[{
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Authorization": "Bearer " ++ vars.salesforceAccessToken
+}]]]></http:headers>
+            </http:request>
+            
+            <!-- Build response -->
+            <ee:transform doc:name="Build Sync Response">
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var stateToStatusMapping = {
+    "New": "New",
+    "In Progress": "Working",
+    "On Hold": "Escalated",
+    "Resolved": "Closed",
+    "Closed": "Closed",
+    "1": "New",
+    "2": "Working",
+    "3": "Escalated",
+    "6": "Closed",
+    "7": "Closed"
+}
+---
+{
+    sourceId: vars.statusSyncPayload.sourceId,
+    targetId: vars.statusSyncPayload.targetId,
+    sourceStatus: vars.statusSyncPayload.sourceStatus,
+    targetStatus: stateToStatusMapping[vars.statusSyncPayload.sourceStatus] default "Working",
+    updatedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"}
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+            
+            <error-handler>
+                <on-error-propagate type="HTTP:CONNECTIVITY, HTTP:TIMEOUT" doc:name="Salesforce Connectivity Error">
+                    <logger level="ERROR" 
+                            message="#['Salesforce API connectivity error during status sync - CorrelationId: ' ++ correlationId]" 
+                            doc:name="Log Error"/>
+                    <raise-error type="HTTP:BAD_GATEWAY" description="Salesforce service unavailable"/>
+                </on-error-propagate>
+            </error-handler>
+        </try>
+        
+    </sub-flow>
+
+</mule>
